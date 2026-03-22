@@ -326,10 +326,11 @@ app.get('/api/admin/products', auth, async (req, res) => {
 });
 
 app.post('/api/admin/products', auth, async (req, res) => {
-  const { brand, name, notes, price, old_price, category, description, sizes, badge, active, image_url } = req.body;
+  const { brand, name, notes, price, old_price, category, description, sizes, badge, active, image_url, images } = req.body;
   const db = await getDb();
   const last = await db.collection('products').findOne({}, { sort: { sort_order: -1 } });
   const sort_order = (last?.sort_order || 0) + 1;
+  const imgs = Array.isArray(images) && images.length ? images : (image_url ? [image_url] : []);
   const result = await db.collection('products').insertOne({
     brand, name, notes, price: +price,
     old_price: old_price ? +old_price : null,
@@ -337,15 +338,17 @@ app.post('/api/admin/products', auth, async (req, res) => {
     sizes: sizes || '50ml,100ml',
     badge: badge || null,
     active: active !== false,
-    image_url: image_url || null,
+    image_url: imgs[0] || null,
+    images: imgs,
     sort_order, created_at: new Date()
   });
   res.json({ success: true, id: result.insertedId.toString() });
 });
 
 app.put('/api/admin/products/:id', auth, async (req, res) => {
-  const { brand, name, notes, price, old_price, category, description, sizes, badge, active, sort_order, image_url } = req.body;
+  const { brand, name, notes, price, old_price, category, description, sizes, badge, active, sort_order, image_url, images } = req.body;
   const db = await getDb();
+  const imgs = Array.isArray(images) && images.length ? images : (image_url ? [image_url] : []);
   await db.collection('products').updateOne(
     { _id: new ObjectId(req.params.id) },
     { $set: {
@@ -355,7 +358,8 @@ app.put('/api/admin/products/:id', auth, async (req, res) => {
       sizes: sizes || '50ml,100ml',
       badge: badge || null,
       active: !!active,
-      image_url: image_url || null,
+      image_url: imgs[0] || null,
+      images: imgs,
       ...(sort_order && { sort_order })
     }}
   );
