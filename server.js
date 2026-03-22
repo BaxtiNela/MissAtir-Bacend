@@ -6,11 +6,34 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { store, nextId } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'missatir_secret_2025_xyz';
+
+// ===== CLOUDFLARE R2 =====
+const R2 = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT || 'https://d3d889074843cb9d58cb905250d20d27.r2.cloudflarestorage.com',
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+  },
+});
+const R2_BUCKET = process.env.R2_BUCKET || 'd3d889074843cb9d58cb905250d20d27';
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || 'https://pub-d3d889074843cb9d58cb905250d20d27.r2.dev';
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Faqat rasm fayllari qabul qilinadi'));
+  }
+});
 
 app.use(cors());
 app.use(express.json());
@@ -340,6 +363,44 @@ app.get('/api/admin/dashboard', auth, (req, res) => {
     totalReviews: store.reviews.filter(r => r.active).length,
     recentOrders: [...store.orders].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5)
   });
+});
+
+// ============================================================
+// IMAGE UPLOAD — Cloudflare R2
+// ============================================================
+
+app.post('/api/admin/upload', auth, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Rasm yuklanmadi' });
+
+    const ext = req.file.originalname.split('.').pop().toLowerCase();
+    const fileName = `products/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+    await R2.send(new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: fileName,
+      Body: req.file.buffer,
+      ContentType: req.file.mimetype,
+    }));
+
+    const url = `${R2_PUBLIC_URL}/${fileName}`;
+    res.json({ success: true, url });
+  } catch (err) {
+    console.error('Upload xatosi:', err);
+    res.status(500).json({ error: 'Rasm yuklanmadi: ' + err.message });
+  }
+});
+
+app.delete('/api/admin/upload', auth, async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL kerak' });
+    const key = url.replace(R2_PUBLIC_URL + '/', '');
+    await R2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================
