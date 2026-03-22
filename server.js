@@ -266,7 +266,7 @@ app.put('/api/admin/bonus-info', auth, async (req, res) => {
 });
 
 app.post('/api/orders', async (req, res) => {
-  const { full_name, phone, address, product, note } = req.body;
+  const { full_name, phone, address, product, note, product_image, product_price, product_size, product_brand } = req.body;
   if (!full_name || !phone || !address) {
     return res.status(400).json({ error: 'Ism, telefon va manzil majburiy' });
   }
@@ -276,6 +276,10 @@ app.post('/api/orders', async (req, res) => {
   const result = await db.collection('orders').insertOne({
     full_name, phone, phone_key: phoneKey, address,
     product: product || '',
+    product_image: product_image || null,
+    product_price: product_price ? +product_price : null,
+    product_size: product_size || null,
+    product_brand: product_brand || null,
     note: note || '',
     status: 'new',
     bonus_given: false,
