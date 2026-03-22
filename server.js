@@ -309,6 +309,41 @@ app.get('/api/orders/track/:phone', async (req, res) => {
   });
 });
 
+// Bonus bilan buyurtma
+app.post('/api/orders/bonus', async (req, res) => {
+  const { full_name, phone, address, product } = req.body;
+  if (!full_name || !phone || !address || !product) {
+    return res.status(400).json({ error: 'Barcha maydonlar majburiy' });
+  }
+  const db = await getDb();
+  const phoneKey = phone.replace(/\D/g, '');
+  const customer = await db.collection('customers').findOne({ phone_key: phoneKey });
+  const bonusInfo = await db.collection('bonus_info').findOne({});
+  const threshold = bonusInfo?.threshold || 1000;
+
+  if (!customer || (customer.bonus || 0) < threshold) {
+    return res.status(400).json({ error: `Bonus tanga yetarli emas. Minimum ${threshold} tanga kerak.` });
+  }
+
+  // Tangani ayirish
+  await db.collection('customers').updateOne(
+    { phone_key: phoneKey },
+    { $inc: { bonus: -threshold }, $set: { updated_at: new Date() } }
+  );
+
+  const result = await db.collection('orders').insertOne({
+    full_name, phone, phone_key: phoneKey, address,
+    product: product + ' [BONUS]',
+    note: `Bonus tanga bilan sotib olindi (-${threshold} tanga). Bepul yetkazish.`,
+    status: 'new',
+    bonus_order: true,
+    bonus_given: false,
+    created_at: new Date()
+  });
+
+  res.json({ success: true, id: result.insertedId.toString(), bonus_used: threshold });
+});
+
 // ============================================================
 // ADMIN AUTH
 // ============================================================
