@@ -233,14 +233,42 @@ app.post('/api/orders', async (req, res) => {
     return res.status(400).json({ error: 'Ism, telefon va manzil majburiy' });
   }
   const db = await getDb();
+  // Normalize phone for tracking
+  const phoneKey = phone.replace(/\D/g, '');
   const result = await db.collection('orders').insertOne({
-    full_name, phone, address,
+    full_name, phone, phone_key: phoneKey, address,
     product: product || '',
     note: note || '',
     status: 'new',
+    bonus_given: false,
     created_at: new Date()
   });
   res.json({ success: true, id: result.insertedId.toString() });
+});
+
+// Mijoz buyurtmalarini kuzatish (telefon orqali)
+app.get('/api/orders/track/:phone', async (req, res) => {
+  const db = await getDb();
+  const phoneKey = req.params.phone.replace(/\D/g, '');
+  if (phoneKey.length < 7) return res.status(400).json({ error: 'Telefon raqam noto\'g\'ri' });
+  const orders = await db.collection('orders')
+    .find({ phone_key: phoneKey })
+    .sort({ created_at: -1 })
+    .toArray();
+  // Bonus tangalar
+  const customer = await db.collection('customers').findOne({ phone_key: phoneKey });
+  res.json({
+    orders: orders.map(o => ({
+      id: o._id.toString(),
+      product: o.product,
+      status: o.status,
+      created_at: o.created_at,
+      full_name: o.full_name,
+      address: o.address,
+    })),
+    bonus: customer?.bonus || 0,
+    full_name: orders[0]?.full_name || ''
+  });
 });
 
 // ============================================================
@@ -521,8 +549,31 @@ app.get('/api/admin/orders', auth, async (req, res) => {
 
 app.put('/api/admin/orders/:id/status', auth, async (req, res) => {
   const db = await getDb();
-  await db.collection('orders').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status: req.body.status } });
-  res.json({ success: true });
+  const newStatus = req.body.status;
+  const order = await db.collection('orders').findOne({ _id: new ObjectId(req.params.id) });
+  if (!order) return res.status(404).json({ error: 'Topilmadi' });
+
+  await db.collection('orders').updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status: newStatus } }
+  );
+
+  // Yetkazildi => 100 bonus tanga (faqat bir marta)
+  let bonusAdded = 0;
+  if (newStatus === 'delivered' && !order.bonus_given && order.phone_key) {
+    await db.collection('customers').updateOne(
+      { phone_key: order.phone_key },
+      { $inc: { bonus: 100 }, $set: { full_name: order.full_name, phone: order.phone, updated_at: new Date() } },
+      { upsert: true }
+    );
+    await db.collection('orders').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { bonus_given: true } }
+    );
+    bonusAdded = 100;
+  }
+
+  res.json({ success: true, bonus_added: bonusAdded });
 });
 
 app.delete('/api/admin/orders/:id', auth, async (req, res) => {
@@ -537,14 +588,22 @@ app.delete('/api/admin/orders/:id', auth, async (req, res) => {
 
 app.get('/api/admin/dashboard', auth, async (req, res) => {
   const db = await getDb();
-  const [totalOrders, newOrders, totalProducts, totalReviews, recentOrders] = await Promise.all([
+  const [totalOrders, newOrders, totalProducts, totalReviews, recentOrders, totalCustomers] = await Promise.all([
     db.collection('orders').countDocuments(),
     db.collection('orders').countDocuments({ status: 'new' }),
     db.collection('products').countDocuments({ active: true }),
     db.collection('reviews').countDocuments({ active: true }),
-    db.collection('orders').find({}).sort({ created_at: -1 }).limit(5).toArray()
+    db.collection('orders').find({}).sort({ created_at: -1 }).limit(5).toArray(),
+    db.collection('customers').countDocuments()
   ]);
-  res.json({ totalOrders, newOrders, totalProducts, totalReviews, recentOrders: fmtArr(recentOrders) });
+  res.json({ totalOrders, newOrders, totalProducts, totalReviews, totalCustomers, recentOrders: fmtArr(recentOrders) });
+});
+
+// Admin — barcha mijozlar va bonuslari
+app.get('/api/admin/customers', auth, async (req, res) => {
+  const db = await getDb();
+  const data = await db.collection('customers').find({}).sort({ bonus: -1 }).toArray();
+  res.json(fmtArr(data));
 });
 
 // ============================================================
