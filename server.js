@@ -150,7 +150,25 @@ async function initDb(db) {
   if (!admins) {
     await db.collection('admins').insertOne({
       username: 'admin',
-      password: bcrypt.hashSync('admin123', 10)
+      password: bcrypt.hashSync('497222', 10)
+    });
+  } else {
+    // Parolni yangilash
+    await db.collection('admins').updateOne(
+      { username: 'admin' },
+      { $set: { password: bcrypt.hashSync('497222', 10) } }
+    );
+  }
+
+  const bonusInfo = await db.collection('bonus_info').findOne({});
+  if (!bonusInfo) {
+    await db.collection('bonus_info').insertOne({
+      title: '🪙 Bonus tanga dasturi',
+      description: '1,000 ta tanga to\'plasangiz, katalogdagi istalgan 100ml atirdan BEPUL olish huquqiga ega bo\'lasiz! Buyurtma bepul yetkazib beriladi.',
+      threshold: 1000,
+      reward: '100ml atir (bepul yetkazish bilan)',
+      active: true,
+      updated_at: new Date()
     });
   }
 }
@@ -225,6 +243,26 @@ app.get('/api/footer', async (req, res) => {
   const db = await getDb();
   const doc = await db.collection('footer').findOne({});
   res.json(fmt(doc));
+});
+
+app.get('/api/bonus-info', async (req, res) => {
+  const db = await getDb();
+  const doc = await db.collection('bonus_info').findOne({});
+  res.json(fmt(doc));
+});
+
+app.get('/api/admin/bonus-info', auth, async (req, res) => {
+  const db = await getDb();
+  res.json(fmt(await db.collection('bonus_info').findOne({})));
+});
+
+app.put('/api/admin/bonus-info', auth, async (req, res) => {
+  const { title, description, threshold, reward, active } = req.body;
+  const db = await getDb();
+  await db.collection('bonus_info').updateOne({}, {
+    $set: { title, description, threshold: +threshold, reward, active: !!active, updated_at: new Date() }
+  });
+  res.json({ success: true });
 });
 
 app.post('/api/orders', async (req, res) => {
